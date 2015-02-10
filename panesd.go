@@ -8,6 +8,7 @@ import (
 	"fmt"
 	ghttp "github.com/gorilla/http"
 	"github.com/gorilla/mux"
+	jsonrpc "github.com/gorilla/rpc/json"
 	"github.com/gorilla/websocket"
 	"log"
 	"math/rand"
@@ -35,6 +36,16 @@ type ChromeError struct {
 	Code    int      `json:"code,omitempty"`
 	Message string   `json:"message,omitempty"`
 	Data    []string `json:"data,omitempty"`
+}
+
+type RuntimeEvaluateRequest struct {
+	Method string      `json:"method"`
+	Params interface{} `json:"params"`
+	Id     uint64      `json:"id"`
+}
+
+type RuntimeEvaluateRequestParams struct {
+	Expression string `json:"expression"`
 }
 
 // We don't know if an incoming message from Chrome is going to be a request or
@@ -69,38 +80,38 @@ func main() {
 	chrome, err := getChrome()
 	errCheck(err)
 
-	// turn console on
-	// request, err := jsonrpc.EncodeClientRequest("Console.enable", nil)
-	// errCheck(err)
-	// err = chrome.WriteMessage(
-	// 	websocket.TextMessage,
-	// 	request,
-	// )
-	// errCheck(err)
-
 	// loop read console messages
 	go func() {
 		for {
-			var consoleMessage ChromeMessage
-			err := chrome.ReadJSON(&consoleMessage)
+			var chromeMessage ChromeMessage
+			err := chrome.ReadJSON(&chromeMessage)
 			if err != nil {
 				logger.Println(err)
 				logger.Println("Trying to reconnect to Chrome")
 				chrome, err = getChrome()
 				errCheck(err)
 			} else {
-				// logger.Println(consoleMessage)
-				if len(consoleMessage.Method) != 0 {
+				// logger.Println(chromeMessage)
+				if len(chromeMessage.Method) != 0 {
 					logger.Println("Message is a request")
-					logger.Println(consoleMessage.Method)
-					logger.Println(consoleMessage.Params)
+					logger.Println(chromeMessage.Method)
+					logger.Println(chromeMessage.Params)
+					if chromeMessage.Method == "Page.domContentEventFired" {
+						insertJavascript(chrome)
+					}
+                    // TODO: these type assertions are ugly and are somewhat likely to crash us here
+					if chromeMessage.Method == "Console.messageAdded" &&
+						chromeMessage.Params["message"].(map[string]interface{})["level"] == "info" &&
+						chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"] == "GrowingPanes.done" {
+						pageDone(chrome)
+					}
 				}
-				if consoleMessage.Result != nil {
+				if chromeMessage.Result != nil {
 					logger.Println("Message is a response")
-					logger.Println(consoleMessage.Result)
+					logger.Println(chromeMessage.Result)
 				}
-				if consoleMessage.Error != nil {
-					chromeError := consoleMessage.Error.(map[string]interface{})
+				if chromeMessage.Error != nil {
+					chromeError := chromeMessage.Error.(map[string]interface{})
 					logger.Println("Message is an error")
 					logger.Println(chromeError["code"])
 					logger.Println(chromeError["message"])
@@ -157,6 +168,33 @@ func getChrome() (*websocket.Conn, error) {
 		netConn, err := net.Dial("tcp", host+":"+strconv.Itoa(port))
 		errCheck(err)
 		chrome, _, err := websocket.NewClient(netConn, url, nil, 2048, 2048)
+		errCheck(err)
+
+		// turn "Page" domain on- lets us get navigation notifications
+		request, err := jsonrpc.EncodeClientRequest("Page.enable", nil)
+		errCheck(err)
+		err = chrome.WriteMessage(
+			websocket.TextMessage,
+			request,
+		)
+		errCheck(err)
+
+		// turn "Runtime" domain on- lets us execute Javascript in page
+		request, err = jsonrpc.EncodeClientRequest("Runtime.enable", nil)
+		errCheck(err)
+		err = chrome.WriteMessage(
+			websocket.TextMessage,
+			request,
+		)
+
+		// turn "Console" domain on- lets us receive console messages
+		request, err = jsonrpc.EncodeClientRequest("Console.enable", nil)
+		errCheck(err)
+		err = chrome.WriteMessage(
+			websocket.TextMessage,
+			request,
+		)
+
 		return chrome, err
 	}
 
@@ -192,6 +230,32 @@ func getTabs() []Tab {
 	errCheck(err)
 
 	return tabs
+}
+
+func insertJavascript(chrome *websocket.Conn) {
+	// Insert growing panes javascript
+	params := &RuntimeEvaluateRequestParams{`
+		var script = document.createElement('script');
+		script.setAttribute('src', '/javascripts/growingpanes.js');
+		document.body.appendChild(script);
+	`}
+	request, err := json.Marshal(&RuntimeEvaluateRequest{
+		Method: "Runtime.evaluate",
+		Params: params,
+		Id:     uint64(rand.Int63()),
+	})
+	errCheck(err)
+	err = chrome.WriteMessage(
+		websocket.TextMessage,
+		request,
+	)
+	errCheck(err)
+}
+
+func pageDone(chrome *websocket.Conn) {
+	// TODO: remove hardcoded url
+	err := navigate(chrome, "http://localhost:3000/presentations/next")
+	errCheck(err)
 }
 
 func errCheck(err error) {
