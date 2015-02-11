@@ -68,14 +68,49 @@ type ChromeMessage struct {
 	Id interface{} `json:"id"`
 }
 
+type Configuration struct {
+	Panesfe_endpoint string
+}
+
+var configuration = Configuration{}
+
 var logger *log.Logger
 
 var host = "127.0.0.1"
 var port = 2345
 
+var next_url string
+
 func main() {
 	// Set up logging
 	logger = log.New(os.Stdout, "PanesD ", log.Lshortfile)
+
+	// default config
+	config_file, err := os.Open("config_default.json")
+	errCheck(err)
+	decoder := json.NewDecoder(config_file)
+	err = decoder.Decode(&configuration)
+	errCheck(err)
+	config_file.Close()
+
+	// local config
+	config_file, err = os.Open("config_local.json")
+	if err != nil {
+		if os.IsNotExist(err) {
+			// User doesn't have a local config. that's fine
+		} else {
+			// Some other error -- panic!
+			errCheck(err)
+		}
+	} else {
+		decoder = json.NewDecoder(config_file)
+		err = decoder.Decode(&configuration)
+		config_file.Close()
+		errCheck(err)
+	}
+
+	next_url = configuration.Panesfe_endpoint + "/presentations/next"
+	logger.Println(configuration)
 
 	chrome, err := getChrome()
 	errCheck(err)
@@ -253,8 +288,7 @@ func insertJavascript(chrome *websocket.Conn) {
 }
 
 func pageDone(chrome *websocket.Conn) {
-	// TODO: remove hardcoded url
-	err := navigate(chrome, "http://localhost:3000/presentations/next")
+	err := navigate(chrome, next_url)
 	errCheck(err)
 }
 
