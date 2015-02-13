@@ -1,3 +1,4 @@
 {
-	"Panesfe_endpoint" : "http://localhost"
+	"Panesfe_endpoint" : "http://localhost",
+	"Watchdog_time" : 30
 }

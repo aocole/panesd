@@ -18,6 +18,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -70,9 +71,10 @@ type ChromeMessage struct {
 
 type Configuration struct {
 	Panesfe_endpoint string
+	Watchdog_time    int64
 }
 
-var configuration = Configuration{}
+var config = Configuration{}
 
 var logger *log.Logger
 
@@ -80,6 +82,8 @@ var host = "127.0.0.1"
 var port = 2345
 
 var next_url string
+
+var watchdog = Watchdog{time.Now().UnixNano()}
 
 func main() {
 	// Set up logging
@@ -89,7 +93,7 @@ func main() {
 	config_file, err := os.Open("config_default.json")
 	errCheck(err)
 	decoder := json.NewDecoder(config_file)
-	err = decoder.Decode(&configuration)
+	err = decoder.Decode(&config)
 	errCheck(err)
 	config_file.Close()
 
@@ -104,13 +108,13 @@ func main() {
 		}
 	} else {
 		decoder = json.NewDecoder(config_file)
-		err = decoder.Decode(&configuration)
+		err = decoder.Decode(&config)
 		config_file.Close()
 		errCheck(err)
 	}
 
-	next_url = configuration.Panesfe_endpoint + "/presentations/next"
-	logger.Println(configuration)
+	next_url = config.Panesfe_endpoint + "/presentations/next"
+	logger.Println(config)
 
 	chrome, err := getChrome()
 	errCheck(err)
@@ -133,8 +137,10 @@ func main() {
 					logger.Println(chromeMessage.Params)
 					if chromeMessage.Method == "Page.domContentEventFired" {
 						insertJavascript(chrome)
+						// TODO:Enable watchdog
+						// watchdog.Start(chrome)
 					}
-                    // TODO: these type assertions are ugly and are somewhat likely to crash us here
+					// TODO: these type assertions are ugly and are somewhat likely to crash us here
 					if chromeMessage.Method == "Console.messageAdded" &&
 						chromeMessage.Params["message"].(map[string]interface{})["level"] == "info" &&
 						chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"] == "GrowingPanes.done" {
@@ -298,4 +304,25 @@ func errCheck(err error) {
 		count := runtime.Stack(trace, true)
 		logger.Fatalf("%s\nStack of %d bytes: %s", trace, count, err)
 	}
+}
+
+type Watchdog struct{ last int64 }
+
+func (w *Watchdog) KeepAlive() {
+	atomic.StoreInt64(&w.last, time.Now().UnixNano())
+}
+
+func (w *Watchdog) Start(chrome *websocket.Conn) {
+	w.KeepAlive()
+	go func() {
+		for {
+			logger.Println("Tick")
+			time.Sleep(time.Second)
+			if atomic.LoadInt64(&w.last) < time.Now().Add(-time.Duration(config.Watchdog_time)*time.Second).UnixNano() {
+				logger.Println("Watchdog expired. Loading next page.")
+				pageDone(chrome)
+				break
+			}
+		}
+	}()
 }
