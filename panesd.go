@@ -8,7 +8,6 @@ import (
 	"fmt"
 	ghttp "github.com/gorilla/http"
 	"github.com/gorilla/mux"
-	jsonrpc "github.com/gorilla/rpc/json"
 	"github.com/gorilla/websocket"
 	"log"
 	"math/rand"
@@ -42,7 +41,7 @@ type ChromeError struct {
 type RuntimeEvaluateRequest struct {
 	Method string      `json:"method"`
 	Params interface{} `json:"params"`
-	Id     uint64      `json:"id"`
+	Id     int         `json:"id"`
 }
 
 type RuntimeEvaluateRequestParams struct {
@@ -66,7 +65,8 @@ type ChromeMessage struct {
 	Params map[string]interface{} `json:"params"`
 	// The request id. This can be of any type. It is used to match the
 	// response with the request that it is replying to.
-	Id interface{} `json:"id"`
+	// UPDATE: as of chrome 42.0.2311.90 it appears this must be a 32-bit int
+	Id int `json:"id"`
 }
 
 type Configuration struct {
@@ -86,6 +86,10 @@ var next_url string
 var watchdog = Watchdog{time.Now().UnixNano()}
 
 func main() {
+	// Make random number randomish. Without this, calls to rand() will
+	// always return the same sequence
+	rand.Seed(time.Now().UnixNano())
+
 	// Set up logging
 	logger = log.New(os.Stdout, "PanesD ", log.Lshortfile)
 
@@ -167,7 +171,7 @@ func main() {
 		vars := mux.Vars(request)
 		url := vars["url"]
 		errCheck(navigate(chrome, url))
-		fmt.Fprint(response, "Navigated to "+url)
+		fmt.Fprintln(response, "Navigated to "+url)
 	})
 	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":3001", nil))
@@ -212,7 +216,17 @@ func getChrome() (*websocket.Conn, error) {
 		errCheck(err)
 
 		// turn "Page" domain on- lets us get navigation notifications
-		request, err := jsonrpc.EncodeClientRequest("Page.enable", nil)
+		request, err := encodeClientRequest("Page.enable", nil)
+		logger.Println("Request is " + string(request))
+		errCheck(err)
+		err = chrome.WriteMessage(
+			websocket.TextMessage,
+			request,
+		)
+		errCheck(err)
+
+		// turn "Network" domain on- lets us get navigation notifications
+		request, err = encodeClientRequest("Network.enable", nil)
 		errCheck(err)
 		err = chrome.WriteMessage(
 			websocket.TextMessage,
@@ -221,7 +235,8 @@ func getChrome() (*websocket.Conn, error) {
 		errCheck(err)
 
 		// turn "Runtime" domain on- lets us execute Javascript in page
-		request, err = jsonrpc.EncodeClientRequest("Runtime.enable", nil)
+		request, err = encodeClientRequest("Runtime.enable", nil)
+		logger.Println("Request is " + string(request))
 		errCheck(err)
 		err = chrome.WriteMessage(
 			websocket.TextMessage,
@@ -229,7 +244,7 @@ func getChrome() (*websocket.Conn, error) {
 		)
 
 		// turn "Console" domain on- lets us receive console messages
-		request, err = jsonrpc.EncodeClientRequest("Console.enable", nil)
+		request, err = encodeClientRequest("Console.enable", nil)
 		errCheck(err)
 		err = chrome.WriteMessage(
 			websocket.TextMessage,
@@ -247,13 +262,15 @@ func navigate(chrome *websocket.Conn, url string) error {
 		"url": url,
 	}
 
-	urlChangeMsg := ChromeMessage{
-		Method: "Page.navigate",
-		Params: params,
-		Id:     int(rand.Int31()),
-	}
+	request, err := encodeClientRequest("Page.navigate", params)
+	errCheck(err)
+	logger.Println("Request is " + string(request))
+	err = chrome.WriteMessage(
+		websocket.TextMessage,
+		request,
+	)
 
-	return chrome.WriteJSON(urlChangeMsg)
+	return err
 }
 
 func getTabs() []Tab {
@@ -283,7 +300,7 @@ func insertJavascript(chrome *websocket.Conn) {
 	request, err := json.Marshal(&RuntimeEvaluateRequest{
 		Method: "Runtime.evaluate",
 		Params: params,
-		Id:     uint64(rand.Int63()),
+		Id:     getRpcId(),
 	})
 	errCheck(err)
 	err = chrome.WriteMessage(
@@ -291,6 +308,7 @@ func insertJavascript(chrome *websocket.Conn) {
 		request,
 	)
 	errCheck(err)
+	logger.Println("Inserted Javascript!!!!!!!!!")
 }
 
 func pageDone(chrome *websocket.Conn) {
@@ -304,6 +322,34 @@ func errCheck(err error) {
 		count := runtime.Stack(trace, true)
 		logger.Fatalf("%s\nStack of %d bytes: %s", trace, count, err)
 	}
+}
+
+// Gorilla jsonrpc can provide these methods for us, but they use rand.Int63()
+// for the Id and this appears to be too large for chrome to handle for some
+// reason.
+// clientRequest represents a JSON-RPC request sent by a client.
+type clientRequest struct {
+	// A String containing the name of the method to be invoked.
+	Method string `json:"method"`
+	// Object to pass as request parameter to the method.
+	Params interface{} `json:"params"`
+	// The request id. This can be of any type. It is used to match the
+	// response with the request that it is replying to.
+	Id int `json:"id"`
+}
+
+// EncodeClientRequest encodes parameters for a JSON-RPC client request.
+func encodeClientRequest(method string, args interface{}) ([]byte, error) {
+	c := &clientRequest{
+		Method: method,
+		Params: args,
+		Id:     getRpcId(),
+	}
+	return json.Marshal(c)
+}
+
+func getRpcId() int {
+	return int(rand.Int31())
 }
 
 type Watchdog struct{ last int64 }

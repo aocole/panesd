@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 # Start chrome with a command like:
 
-google-chrome --remote-debugging-port=2345 --noerrdialogs --no-first-run --user-data-dir=/tmp/panesd-chrome-profile #--kiosk about:blank
+google-chrome --remote-debugging-port=2345 --noerrdialogs --no-first-run --user-data-dir=/tmp/panesd-chrome-profile about:blank #--kiosk about:blank
