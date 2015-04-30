@@ -225,15 +225,6 @@ func getChrome() (*websocket.Conn, error) {
 		)
 		errCheck(err)
 
-		// turn "Network" domain on- lets us get navigation notifications
-		request, err = encodeClientRequest("Network.enable", nil)
-		errCheck(err)
-		err = chrome.WriteMessage(
-			websocket.TextMessage,
-			request,
-		)
-		errCheck(err)
-
 		// turn "Runtime" domain on- lets us execute Javascript in page
 		request, err = encodeClientRequest("Runtime.enable", nil)
 		logger.Println("Request is " + string(request))
