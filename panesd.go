@@ -83,7 +83,7 @@ var port = 2345
 
 var next_url string
 
-var watchdog = Watchdog{time.Now().UnixNano()}
+var watchdog = Watchdog{time.Now().UnixNano(), false}
 
 func main() {
 	// Make random number randomish. Without this, calls to rand() will
@@ -141,14 +141,18 @@ func main() {
 					logger.Println(chromeMessage.Params)
 					if chromeMessage.Method == "Page.domContentEventFired" {
 						insertJavascript(chrome)
-						// TODO:Enable watchdog
-						// watchdog.Start(chrome)
+						watchdog.Start(chrome)
 					}
 					// TODO: these type assertions are ugly and are somewhat likely to crash us here
 					if chromeMessage.Method == "Console.messageAdded" &&
 						chromeMessage.Params["message"].(map[string]interface{})["level"] == "info" &&
 						chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"] == "GrowingPanes.done" {
 						pageDone(chrome)
+					}
+					if chromeMessage.Method == "Console.messageAdded" &&
+						chromeMessage.Params["message"].(map[string]interface{})["level"] == "info" &&
+						chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"] == "GrowingPanes.keepAlive" {
+						watchdog.KeepAlive()
 					}
 				}
 				if chromeMessage.Result != nil {
@@ -343,21 +347,33 @@ func getRpcId() int {
 	return int(rand.Int31())
 }
 
-type Watchdog struct{ last int64 }
+type Watchdog struct {
+	last    int64
+	running bool
+}
 
 func (w *Watchdog) KeepAlive() {
 	atomic.StoreInt64(&w.last, time.Now().UnixNano())
+	logger.Println("KeepAlive!")
 }
 
 func (w *Watchdog) Start(chrome *websocket.Conn) {
 	w.KeepAlive()
+	if w.running {
+		logger.Println("Watchdog already running, not starting another one.")
+		return
+	}
+	w.running = true
 	go func() {
 		for {
-			logger.Println("Tick")
 			time.Sleep(time.Second)
-			if atomic.LoadInt64(&w.last) < time.Now().Add(-time.Duration(config.Watchdog_time)*time.Second).UnixNano() {
+			timeLeft := atomic.LoadInt64(&w.last) - time.Now().Add(-time.Duration(config.Watchdog_time)*time.Second).UnixNano()
+			logger.Println(strconv.FormatInt(timeLeft/1000000000, 10) + "s til gong")
+			if timeLeft < 0 {
 				logger.Println("Watchdog expired. Loading next page.")
 				pageDone(chrome)
+				w.running = false
+				logger.Println("Breaking watchdog")
 				break
 			}
 		}
