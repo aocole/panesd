@@ -117,7 +117,6 @@ func main() {
 	}
 
 	next_url = config.Panesfe_endpoint + "/presentations/next"
-	logger.Println(config)
 
 	var chrome *websocket.Conn
 
