@@ -91,7 +91,7 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	// Set up logging
-	logger = log.New(os.Stdout, "PanesD ", log.Lshortfile)
+	logger = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
 
 	// default config
 	config_file, err := os.Open("config_default.json")
