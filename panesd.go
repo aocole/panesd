@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -120,17 +119,20 @@ func main() {
 	next_url = config.Panesfe_endpoint + "/presentations/next"
 	logger.Println(config)
 
-	chrome, err := getChrome()
-	errCheck(err)
+	var chrome *websocket.Conn
 
 	// loop read console messages
 	go func() {
+		chrome, err = getChrome()
+		errCheck(err)
+
 		for {
 			var chromeMessage ChromeMessage
 			err := chrome.ReadJSON(&chromeMessage)
 			if err != nil {
 				logger.Println(err)
 				logger.Println("Trying to reconnect to Chrome")
+				chrome = nil
 				chrome, err = getChrome()
 				errCheck(err)
 			} else {
@@ -172,29 +174,25 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/status", func(response http.ResponseWriter, request *http.Request) {
-		fmt.Fprintln(response, "Status: OK")
+		if chrome == nil {
+			fmt.Fprintln(response, "Status: Chrome disconnected")
+		} else {
+			fmt.Fprintln(response, "Status: OK")
+		}
 	})
 	r.HandleFunc("/navigate/{url:.+}", func(response http.ResponseWriter, request *http.Request) {
 		vars := mux.Vars(request)
 		url := vars["url"]
-		errCheck(navigate(chrome, url))
-		fmt.Fprintln(response, "Navigated to "+url)
+		if chrome != nil {
+			errCheck(navigate(chrome, url))
+			fmt.Fprintln(response, "Navigated to "+url)
+		} else {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintln(response, "Chrome disconnected.")
+		}
 	})
 	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":3001", nil))
-
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		fmt.Print("Enter Url: ")
-		input := scanner.Text()
-
-		if err := scanner.Err(); err != nil {
-			fmt.Fprintln(os.Stderr, "reading standard input:", err)
-		}
-
-		err = navigate(chrome, input)
-		errCheck(err)
-	}
 
 }
 
