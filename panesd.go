@@ -171,6 +171,9 @@ func main() {
 	}()
 
 	r := mux.NewRouter()
+	r.HandleFunc("/status", func(response http.ResponseWriter, request *http.Request) {
+		fmt.Fprintln(response, "Status: OK")
+	})
 	r.HandleFunc("/navigate/{url:.+}", func(response http.ResponseWriter, request *http.Request) {
 		vars := mux.Vars(request)
 		url := vars["url"]
