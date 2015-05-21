@@ -124,6 +124,7 @@ func main() {
 	go func() {
 		chrome, err = getChrome()
 		errCheck(err)
+		pageDone(chrome)
 
 		for {
 			var chromeMessage ChromeMessage
@@ -368,7 +369,10 @@ func (w *Watchdog) Start(chrome *websocket.Conn) {
 		for {
 			time.Sleep(time.Second)
 			timeLeft := atomic.LoadInt64(&w.last) - time.Now().Add(-time.Duration(config.Watchdog_time)*time.Second).UnixNano()
-			logger.Println(strconv.FormatInt(timeLeft/1000000000, 10) + "s til gong")
+			timeLeftS := timeLeft / 1000000000
+			if timeLeftS%5 == 0 {
+				logger.Println(strconv.FormatInt(timeLeftS, 10) + "s til gong")
+			}
 			if timeLeft < 0 {
 				logger.Println("Watchdog expired. Loading next page.")
 				pageDone(chrome)
