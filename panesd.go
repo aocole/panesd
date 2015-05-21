@@ -69,8 +69,9 @@ type ChromeMessage struct {
 }
 
 type Configuration struct {
-	Panesfe_endpoint string
-	Watchdog_time    int64
+	PanesfeEndpoint     string
+	SlideTimeout        int64
+	PresentationTimeout int64
 }
 
 var config = Configuration{}
@@ -81,8 +82,6 @@ var host = "127.0.0.1"
 var port = 2345
 
 var next_url string
-
-var watchdog = Watchdog{time.Now().UnixNano(), false}
 
 func main() {
 	// Make random number randomish. Without this, calls to rand() will
@@ -116,9 +115,31 @@ func main() {
 		errCheck(err)
 	}
 
-	next_url = config.Panesfe_endpoint + "/presentations/next"
+	next_url = config.PanesfeEndpoint + "/presentations/next"
 
 	var chrome *websocket.Conn
+
+	presentationExpired := func(*Watchdog) {
+		logger.Println("Watchdog expired. Loading next page.")
+		// TODO: Flag the presentation as having a problem.
+		pageDone(chrome)
+	}
+
+	slideWatchdog := Watchdog{
+		"Slide Watchdog",
+		time.Now().UnixNano(),
+		config.SlideTimeout,
+		false,
+		presentationExpired,
+	}
+
+	presentationWatchdog := Watchdog{
+		"Presentation Watchdog",
+		time.Now().UnixNano(),
+		config.PresentationTimeout,
+		false,
+		presentationExpired,
+	}
 
 	// loop read console messages
 	go func() {
@@ -143,7 +164,8 @@ func main() {
 					logger.Println(chromeMessage.Params)
 					if chromeMessage.Method == "Page.domContentEventFired" {
 						insertJavascript(chrome)
-						watchdog.Start(chrome)
+						slideWatchdog.Start()
+						presentationWatchdog.Start()
 					}
 					// TODO: these type assertions are ugly and are somewhat likely to crash us here
 					if chromeMessage.Method == "Console.messageAdded" &&
@@ -154,7 +176,7 @@ func main() {
 					if chromeMessage.Method == "Console.messageAdded" &&
 						chromeMessage.Params["message"].(map[string]interface{})["level"] == "info" &&
 						chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"] == "GrowingPanes.keepAlive" {
-						watchdog.KeepAlive()
+						slideWatchdog.KeepAlive()
 					}
 				}
 				if chromeMessage.Result != nil {
@@ -349,8 +371,11 @@ func getRpcId() int {
 }
 
 type Watchdog struct {
-	last    int64
-	running bool
+	name            string
+	last            int64
+	timeout         int64
+	running         bool
+	expiredCallback func(*Watchdog)
 }
 
 func (w *Watchdog) KeepAlive() {
@@ -358,7 +383,7 @@ func (w *Watchdog) KeepAlive() {
 	logger.Println("KeepAlive!")
 }
 
-func (w *Watchdog) Start(chrome *websocket.Conn) {
+func (w *Watchdog) Start() {
 	w.KeepAlive()
 	if w.running {
 		logger.Println("Watchdog already running, not starting another one.")
@@ -368,14 +393,13 @@ func (w *Watchdog) Start(chrome *websocket.Conn) {
 	go func() {
 		for {
 			time.Sleep(time.Second)
-			timeLeft := atomic.LoadInt64(&w.last) - time.Now().Add(-time.Duration(config.Watchdog_time)*time.Second).UnixNano()
+			timeLeft := atomic.LoadInt64(&w.last) - time.Now().Add(-time.Duration(w.timeout)*time.Second).UnixNano()
 			timeLeftS := timeLeft / 1000000000
-			if timeLeftS%5 == 0 {
-				logger.Println(strconv.FormatInt(timeLeftS, 10) + "s til gong")
+			if (timeLeftS % 5) == 0 {
+				logger.Println(strconv.FormatInt(timeLeftS, 10) + "s til " + w.name + " expires")
 			}
 			if timeLeft < 0 {
-				logger.Println("Watchdog expired. Loading next page.")
-				pageDone(chrome)
+				w.expiredCallback(w)
 				w.running = false
 				logger.Println("Breaking watchdog")
 				break

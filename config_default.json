@@ -1,4 +1,5 @@
 {
-	"Panesfe_endpoint" : "http://localhost",
-	"Watchdog_time" : 30
+	"PanesfeEndpoint" : "http://localhost",
+	"SlideTimeout" : 30,
+	"PresentationTimeout" : 120
 }
