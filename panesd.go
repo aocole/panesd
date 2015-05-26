@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/DisposaBoy/JsonConfigReader"
 	ghttp "github.com/gorilla/http"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -69,9 +70,9 @@ type ChromeMessage struct {
 }
 
 type Configuration struct {
-	PanesfeEndpoint     string
-	SlideTimeout        int64
-	PresentationTimeout int64
+	PanesfeEndpoint     string `json:"panesfe_endpoint"`
+	SlideTimeout        int64  `json:"slide_timeout"`
+	PresentationTimeout int64  `json:"presentation_timeout"`
 }
 
 var config = Configuration{}
@@ -92,28 +93,21 @@ func main() {
 	logger = log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile)
 
 	// default config
-	config_file, err := os.Open("config_default.json")
+	config_filepath := os.Getenv("VIDEO_WALL_CONFIG_FILE")
+	if config_filepath == "" {
+		config_filepath = "/etc/video_wall_config.json"
+	} else {
+		logger.Println("config filepath is " + config_filepath)
+	}
+	config_file, err := os.Open(config_filepath)
 	errCheck(err)
-	decoder := json.NewDecoder(config_file)
+
+	// This makes the json a little more forgiving and allows comments
+	stripped_config := JsonConfigReader.New(config_file)
+	decoder := json.NewDecoder(stripped_config)
 	err = decoder.Decode(&config)
 	errCheck(err)
 	config_file.Close()
-
-	// local config
-	config_file, err = os.Open("config_local.json")
-	if err != nil {
-		if os.IsNotExist(err) {
-			// User doesn't have a local config. that's fine
-		} else {
-			// Some other error -- panic!
-			errCheck(err)
-		}
-	} else {
-		decoder = json.NewDecoder(config_file)
-		err = decoder.Decode(&config)
-		config_file.Close()
-		errCheck(err)
-	}
 
 	next_url = config.PanesfeEndpoint + "/presentations/next"
 
