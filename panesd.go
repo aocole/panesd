@@ -112,11 +112,12 @@ func main() {
 	next_url = config.PanesfeEndpoint + "/presentations/next"
 
 	var chrome *websocket.Conn
+	interactiveMode := false
 
 	presentationExpired := func(*Watchdog) {
 		logger.Println("Watchdog expired. Loading next page.")
 		// TODO: Flag the presentation as having a problem.
-		pageDone(chrome)
+		pageDone(chrome, interactiveMode)
 	}
 
 	slideWatchdog := Watchdog{
@@ -139,7 +140,7 @@ func main() {
 	go func() {
 		chrome, err = getChrome()
 		errCheck(err)
-		pageDone(chrome)
+		pageDone(chrome, interactiveMode)
 
 		for {
 			var chromeMessage ChromeMessage
@@ -163,14 +164,13 @@ func main() {
 					}
 					// TODO: these type assertions are ugly and are somewhat likely to crash us here
 					if chromeMessage.Method == "Console.messageAdded" &&
-						chromeMessage.Params["message"].(map[string]interface{})["level"] == "info" &&
-						chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"] == "GrowingPanes.done" {
-						pageDone(chrome)
-					}
-					if chromeMessage.Method == "Console.messageAdded" &&
-						chromeMessage.Params["message"].(map[string]interface{})["level"] == "info" &&
-						chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"] == "GrowingPanes.keepAlive" {
-						slideWatchdog.KeepAlive()
+						chromeMessage.Params["message"].(map[string]interface{})["level"] == "info" {
+						functionName := chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"]
+						if functionName == "GrowingPanes.done" {
+							pageDone(chrome, interactiveMode)
+						} else if functionName == "GrowingPanes.keepAlive" {
+							slideWatchdog.KeepAlive()
+						}
 					}
 				}
 				if chromeMessage.Result != nil {
@@ -195,6 +195,17 @@ func main() {
 		} else {
 			fmt.Fprintln(response, "Status: OK")
 		}
+		if interactiveMode {
+			fmt.Fprintln(response, "Interactive Mode: On")
+		} else {
+			fmt.Fprintln(response, "Interactive Mode: Off")
+		}
+	})
+	r.HandleFunc("/interactive/{state:on|off}", func(response http.ResponseWriter, request *http.Request) {
+		vars := mux.Vars(request)
+		state := vars["state"]
+		interactiveMode = state == "on"
+		http.Redirect(response, request, "/status", 302)
 	})
 	r.HandleFunc("/navigate/{url:.+}", func(response http.ResponseWriter, request *http.Request) {
 		vars := mux.Vars(request)
@@ -323,7 +334,11 @@ func insertJavascript(chrome *websocket.Conn) {
 	logger.Println("Inserted Javascript!!!!!!!!!")
 }
 
-func pageDone(chrome *websocket.Conn) {
+func pageDone(chrome *websocket.Conn, interactiveMode bool) {
+	if interactiveMode {
+		logger.Println("In interactive mode, so ignoring pageDone")
+		return
+	}
 	err := navigate(chrome, next_url)
 	errCheck(err)
 }
