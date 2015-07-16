@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"strconv"
 	"sync/atomic"
@@ -82,6 +83,8 @@ var logger *log.Logger
 var host = "127.0.0.1"
 var port = 2345
 
+var next_regexp = regexp.MustCompile("presentations/(\\d+)/display")
+var current_presentation = ""
 var next_url string
 
 func main() {
@@ -116,7 +119,13 @@ func main() {
 
 	presentationExpired := func(*Watchdog) {
 		logger.Println("Watchdog expired. Loading next page.")
-		// TODO: Flag the presentation as having a problem.
+		go currentPresentationBroken("presentation_timeout")
+		pageDone(chrome, interactiveMode)
+	}
+
+	slideExpired := func(*Watchdog) {
+		logger.Println("Watchdog expired. Loading next page.")
+		go currentPresentationBroken("slide_timeout")
 		pageDone(chrome, interactiveMode)
 	}
 
@@ -125,7 +134,7 @@ func main() {
 		time.Now().UnixNano(),
 		config.SlideTimeout,
 		false,
-		presentationExpired,
+		slideExpired,
 	}
 
 	presentationWatchdog := Watchdog{
@@ -161,6 +170,15 @@ func main() {
 						insertJavascript(chrome)
 						slideWatchdog.Start()
 						presentationWatchdog.Start()
+					} else if chromeMessage.Method == "Page.frameNavigated" {
+						current_url := chromeMessage.Params["frame"].(map[string]interface{})["url"].(string)
+						regex_result := next_regexp.FindStringSubmatch(current_url)
+						if regex_result != nil {
+							current_presentation = regex_result[1]
+							logger.Println("Current presentation updated to " + current_presentation)
+						} else {
+							current_presentation = ""
+						}
 					}
 					// TODO: these type assertions are ugly and are somewhat likely to crash us here
 					if chromeMessage.Method == "Console.messageAdded" &&
@@ -349,6 +367,21 @@ func errCheck(err error) {
 		count := runtime.Stack(trace, true)
 		logger.Fatalf("%s\nStack of %d bytes: %s", trace, count, err)
 	}
+}
+
+func currentPresentationBroken(message string) {
+	if current_presentation == "" {
+		return
+	}
+
+	uri := config.PanesfeEndpoint + "/presentations/" + current_presentation + "/mark_broken?"
+	logger.Println("dialing " + uri)
+
+	if _, err := http.PostForm(uri, url.Values{"message": {message}}); err != nil {
+		log.Printf("could not fetch: %v", err)
+		return
+	}
+
 }
 
 // Gorilla jsonrpc can provide these methods for us, but they use rand.Int63()
