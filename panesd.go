@@ -352,17 +352,18 @@ func errCheck(err error) {
 }
 
 func currentPresentationBroken(message string) {
-	if current_presentation == "" {
-		return
-	}
+	return // disable this functionality for now
+	// if current_presentation == "" {
+	// 	return
+	// }
 
-	uri := config.PanesfeEndpoint + "/presentations/" + current_presentation + "/mark_broken?"
-	logger.Println("dialing " + uri)
+	// uri := config.PanesfeEndpoint + "/presentations/" + current_presentation + "/mark_broken?"
+	// logger.Println("dialing " + uri)
 
-	if _, err := http.PostForm(uri, url.Values{"message": {message}}); err != nil {
-		log.Printf("could not fetch: %v", err)
-		return
-	}
+	// if _, err := http.PostForm(uri, url.Values{"message": {message}}); err != nil {
+	// 	log.Printf("could not fetch: %v", err)
+	// 	return
+	// }
 
 }
 
