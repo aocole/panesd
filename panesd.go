@@ -72,7 +72,6 @@ type ChromeMessage struct {
 
 type Configuration struct {
 	PanesfeEndpoint     string `json:"panesfe_endpoint"`
-	SlideTimeout        int64  `json:"slide_timeout"`
 	PresentationTimeout int64  `json:"presentation_timeout"`
 }
 
@@ -123,20 +122,6 @@ func main() {
 		pageDone(chrome, interactiveMode)
 	}
 
-	slideExpired := func(*Watchdog) {
-		logger.Println("Watchdog expired. Loading next page.")
-		go currentPresentationBroken("slide_timeout")
-		pageDone(chrome, interactiveMode)
-	}
-
-	slideWatchdog := Watchdog{
-		"Slide Watchdog",
-		time.Now().UnixNano(),
-		config.SlideTimeout,
-		false,
-		slideExpired,
-	}
-
 	presentationWatchdog := Watchdog{
 		"Presentation Watchdog",
 		time.Now().UnixNano(),
@@ -168,7 +153,6 @@ func main() {
 					logger.Println(chromeMessage.Params)
 					if chromeMessage.Method == "Page.domContentEventFired" {
 						insertJavascript(chrome)
-						slideWatchdog.Start()
 						presentationWatchdog.Start()
 					} else if chromeMessage.Method == "Page.frameNavigated" {
 						current_url := chromeMessage.Params["frame"].(map[string]interface{})["url"].(string)
@@ -186,8 +170,6 @@ func main() {
 						functionName := chromeMessage.Params["message"].(map[string]interface{})["stackTrace"].([]interface{})[0].(map[string]interface{})["functionName"]
 						if functionName == "GrowingPanes.done" {
 							pageDone(chrome, interactiveMode)
-						} else if functionName == "GrowingPanes.keepAlive" {
-							slideWatchdog.KeepAlive()
 						}
 					}
 				}
